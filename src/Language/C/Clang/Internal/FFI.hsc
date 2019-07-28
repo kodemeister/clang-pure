@@ -697,6 +697,87 @@ isFromMainFile l = uderef l $ \lp ->
     clang_Location_isFromMainFile(*$(CXSourceLocation *lp))
     } |]
 
+foreign import ccall "clang_disposeDiagnostic"
+  clang_disposeDiagnostic :: Ptr CXDiagnosticImpl -> Finalizer
+
+diagnostic :: TranslationUnit -> CInt -> Maybe Diagnostic
+diagnostic tu i = uderef tu $ \tup -> do
+  dp <- [C.exp| CXDiagnostic {
+    clang_getDiagnostic($(CXTranslationUnit tup), $(int i))
+    } |]
+  if dp == nullPtr
+    then return Nothing
+    else (Just . Diagnostic) <$> newLeaf tu (\_ -> return ( dp, clang_disposeDiagnostic dp ))
+
+numDiagnostics :: TranslationUnit -> CInt
+numDiagnostics tu = uderef tu $ \tup ->
+  [C.exp| int {
+    clang_getNumDiagnostics($(CXTranslationUnit tup))
+    } |]
+
+parseDiagnosticSeverity :: CInt -> DiagnosticSeverity
+parseDiagnosticSeverity = \case
+  #{const CXDiagnostic_Ignored} -> Ignored
+  #{const CXDiagnostic_Note} -> Note
+  #{const CXDiagnostic_Warning} -> Warning
+  #{const CXDiagnostic_Error} -> Error
+  #{const CXDiagnostic_Fatal} -> Fatal
+  _ -> Ignored -- unrecognized enum value
+
+diagnosticSeverity :: Diagnostic -> DiagnosticSeverity
+diagnosticSeverity d = uderef d $ \dp ->
+  parseDiagnosticSeverity <$> [C.exp| int {
+    clang_getDiagnosticSeverity($(CXDiagnostic dp))
+    } |]
+
+diagnosticLocation :: Diagnostic -> SourceLocation
+diagnosticLocation d = uderef d $ \dp -> do
+  slp <- [C.exp| CXSourceLocation* { ALLOC(
+    clang_getDiagnosticLocation($(CXDiagnostic dp))
+    )} |]
+  sln <- newLeaf (parent d) $ \_ ->
+    return ( slp, free slp )
+  return $ SourceLocation sln
+
+diagnosticSpelling :: Diagnostic -> ByteString
+diagnosticSpelling d = uderef d $ \dp ->
+  withCXString $ \cxsp ->
+    [C.block| void {
+      *$(CXString *cxsp) = clang_getDiagnosticSpelling($(CXDiagnostic dp));
+      } |]
+
+diagnosticOption :: Diagnostic -> ByteString
+diagnosticOption d = uderef d $ \dp ->
+  withCXString $ \cxsp ->
+    [C.block| void {
+      *$(CXString *cxsp) = clang_getDiagnosticOption($(CXDiagnostic dp), NULL);
+      } |]
+
+toDiagnosticDisplayFlag :: DiagnosticDisplayOption -> CUInt
+toDiagnosticDisplayFlag = \case
+  DisplaySourceLocation -> #{const CXDiagnostic_DisplaySourceLocation}
+  DisplayColumn -> #{const CXDiagnostic_DisplayColumn}
+  DisplaySourceRanges -> #{const CXDiagnostic_DisplaySourceRanges}
+  DisplayOption -> #{const CXDiagnostic_DisplayOption}
+  DisplayCategoryId -> #{const CXDiagnostic_DisplayCategoryId}
+  DisplayCategoryName -> #{const CXDiagnostic_DisplayCategoryName}
+
+formatDiagnostic :: Diagnostic -> ByteString
+formatDiagnostic d = uderef d $ \dp ->
+  withCXString $ \cxsp ->
+    [C.block| void {
+      unsigned int cFlags = clang_defaultDiagnosticDisplayOptions();
+      *$(CXString *cxsp) = clang_formatDiagnostic($(CXDiagnostic dp), cFlags);
+      } |]
+
+formatDiagnosticWithOptions :: [ DiagnosticDisplayOption ] -> Diagnostic -> ByteString
+formatDiagnosticWithOptions opts d = uderef d $ \dp ->
+  withCXString $ \cxsp -> do
+    let cFlags = foldr (.|.) 0 (map toDiagnosticDisplayFlag opts)
+    [C.block| void {
+      *$(CXString *cxsp) = clang_formatDiagnostic($(CXDiagnostic dp), $(unsigned int cFlags));
+      } |]
+
 instance Show Cursor where
   show c =
     "Cursor { cursorKind = "
@@ -718,3 +799,6 @@ instance Show File where
     "File { fileName = "
     ++ show (fileName f)
     ++ "}"
+
+instance Show Diagnostic where
+  show = show . formatDiagnostic

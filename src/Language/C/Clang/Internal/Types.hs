@@ -377,3 +377,28 @@ data TypeLayoutError
   | TypeLayoutErrorIncomplete
   | TypeLayoutErrorDependent
     deriving (Eq, Ord, Show)
+
+data CXDiagnosticImpl
+type CXDiagnostic = Ptr CXDiagnosticImpl
+type instance RefOf Diagnostic = CXDiagnosticImpl
+type instance ParentOf Diagnostic = TranslationUnit
+newtype Diagnostic
+  = Diagnostic (Leaf TranslationUnit CXDiagnosticImpl)
+  deriving (Child, Clang)
+
+data DiagnosticSeverity
+  = Ignored
+  | Note
+  | Warning
+  | Error
+  | Fatal
+    deriving (Eq, Ord, Show)
+
+data DiagnosticDisplayOption
+  = DisplaySourceLocation
+  | DisplayColumn
+  | DisplaySourceRanges
+  | DisplayOption
+  | DisplayCategoryId
+  | DisplayCategoryName
+    deriving (Eq, Ord, Show)
